@@ -22,7 +22,12 @@ from agentic.explainer import build_customer_explanation, format_kb_insights
 from agentic.strategies import build_repair_strategies, build_damage_story
 from agentic.vision.after_inpaint import make_repaired_after_preview
 
-# Custom modules fallback removed; demo mode always used
+# Custom modules (demo fallback)
+try:
+    from car_damage_detector import CarDamageDetector
+    from utils import enhance_image, calculate_damage_stats
+except ImportError:
+    CarDamageDetector = None  # No warning pop-up
 
 # ---------------------- Page setup ----------------------
 st.set_page_config(
@@ -36,7 +41,7 @@ st.set_page_config(
 st.markdown(
     r"""
 <style>
-/* ... your previous CSS here ... */
+/* Add your custom CSS here */
 </style>
 """,
     unsafe_allow_html=True,
@@ -47,37 +52,33 @@ def hero_svg_car_damage() -> str:
     svg = r"""<div style="border-radius:14px; border:1px solid rgba(255,255,255,0.10); ... </svg></div>"""
     return textwrap.dedent(svg).strip()
 
-# ---------------------- Demo Damage Detection (Randomized) ----------------------
+# ---------------------- Demo Damage Detection ----------------------
 def demo_damage_detection(image: Image.Image):
     img_array = np.array(image)
     height, width = img_array.shape[:2]
 
-    # Random number of damages (1–4)
-    num_damages = random.randint(1, 4)
-    possible_types = ["Scratch", "Dent", "Paint Damage", "Broken Part"]
+    damage_types = ["Scratch","Dent","Paint Damage","Broken Part"]
     detections = []
+    for dt in damage_types:
+        if random.random() > 0.3:  # randomly include damage type
+            x1, y1 = int(width*random.uniform(0.1,0.5)), int(height*random.uniform(0.1,0.5))
+            x2, y2 = x1+int(width*random.uniform(0.1,0.3)), y1+int(height*random.uniform(0.1,0.3))
+            severity = random.choice(["Light","Moderate","Severe"])
+            confidence = round(random.uniform(0.7,0.95),2)
+            area = round(random.uniform(1.0,10.0),1)
+            cost = random.randint(100,800)
+            detections.append({
+                "type": dt,
+                "severity": severity,
+                "confidence": confidence,
+                "bbox": [x1,y1,x2,y2],
+                "area_percentage": area,
+                "estimated_cost": cost
+            })
 
-    for _ in range(num_damages):
-        dmg_type = random.choice(possible_types)
-        severity = random.choices(["Light","Moderate","Severe"], weights=[0.5,0.35,0.15])[0]
-        confidence = round(random.uniform(0.7, 0.95), 2)
-        x1, y1 = random.randint(0, width//2), random.randint(0, height//2)
-        x2, y2 = random.randint(width//2, width-1), random.randint(height//2, height-1)
-        area_percentage = round(random.uniform(1,10),2)
-        estimated_cost = random.randint(100, 1000)
-
-        detections.append({
-            "type": dmg_type,
-            "severity": severity,
-            "confidence": confidence,
-            "bbox": [x1,y1,x2,y2],
-            "area_percentage": area_percentage,
-            "estimated_cost": estimated_cost
-        })
-
-    # Draw annotations
     img_with_annotations = img_array.copy()
     colors = {"Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255), "Broken Part": (255,0,0)}
+
     for d in detections:
         x1, y1, x2, y2 = d["bbox"]
         color = colors.get(d["type"], (255,255,0))
@@ -113,7 +114,9 @@ def create_severity_chart(detections):
 def generate_assessment_report(detections, image_info):
     total_cost = sum([d.get("estimated_cost",0) for d in detections])
     total_area = sum([d["area_percentage"] for d in detections])
-    avg_confidence = np.mean([d["confidence"] for d in detections])
+    # Handle missing confidence
+    confidences = [d.get("confidence") for d in detections if "confidence" in d]
+    avg_confidence = float(np.mean(confidences)) if confidences else None
     severity_priority = {"Severe":3, "Moderate":2, "Light":1}
     highest_severity = max([severity_priority.get(d["severity"],0) for d in detections])
     severity_names = {3:"Severe",2:"Moderate",1:"Light"}
@@ -141,10 +144,7 @@ def make_repaired_preview(before_rgb: np.ndarray, primary: dict, intensity: floa
         mask = getattr(res, "mask", None) or getattr(res, "mask_bgr", None) or getattr(res, "mask_gray", None)
         after_rgb = after_bgr[:, :, ::-1] if after_bgr is not None else None
         diff_rgb = diff_bgr[:, :, ::-1] if diff_bgr is not None else None
-        if mask is None:
-            mask_vis = None
-        else:
-            mask_vis = mask[:, :, ::-1] if mask.ndim==3 else mask
+        mask_vis = mask[:, :, ::-1] if mask is not None and mask.ndim==3 else mask
         return {"after": after_rgb, "diff": diff_rgb, "mask": mask_vis}
     except Exception as e:
         st.warning(f"Preview generation failed: {e}")
@@ -174,18 +174,14 @@ def main():
     with st.sidebar:
         st.markdown("## Configuration")
         st.markdown("---")
-        developer_mode = st.checkbox("Developer mode (show debug)", value=False)
-        st.session_state["dev_mode"] = developer_mode
+        st.session_state["dev_mode"] = st.checkbox("Developer mode (show debug)", value=False)
         confidence_threshold = st.slider("Confidence Threshold", 0.1,1.0,0.5,0.05)
         damage_types = st.multiselect("Damage Types", ["Scratch","Dent","Broken Part","Paint Damage"], default=["Scratch","Dent","Paint Damage"])
-        enhance_image_option = st.checkbox("Enable Image Enhancement", value=True)
         show_confidence = st.checkbox("Display Confidence Scores", value=True)
-        generate_report = st.checkbox("Generate Assessment Report", value=True)
         st.markdown("---")
 
     col1, col2 = st.columns([1,1])
 
-    # Left: Upload
     with col1:
         st.markdown("## Image Upload")
         uploaded_file = st.file_uploader("Select vehicle image", type=["png","jpg","jpeg"])
@@ -201,8 +197,9 @@ def main():
                     time.sleep(1)
                     processed_image, detections = demo_damage_detection(image)
 
-                    # Filter based on selected damage types
+                    # Filter based on sidebar selection
                     filtered_detections = [d for d in detections if d["type"] in damage_types]
+                    # Remove confidence if disabled
                     if not show_confidence:
                         for d in filtered_detections:
                             d.pop("confidence", None)
@@ -212,38 +209,24 @@ def main():
 
                 st.success(f"Found {len(filtered_detections)} damage areas.")
 
-    # Right: Results
     with col2:
         st.markdown("## Analysis Results")
         if "detections" in st.session_state:
             st.image(st.session_state.processed_image, caption="Detected Damage Areas", use_container_width=True)
             detections = st.session_state.detections
 
-            # Pie + severity charts
+            # Pie chart
             st.plotly_chart(create_damage_distribution_chart(detections), use_container_width=True)
             st.plotly_chart(create_severity_chart(detections), use_container_width=True)
 
-            # Repair cost & download
+            # Generate report
             report = generate_assessment_report(detections, st.session_state.image_info)
-            st.markdown(f"**Estimated Repair Cost:** ${report['estimated_repair_cost']}")
+            st.markdown(f"### Estimated Total Repair Cost: ${report['estimated_repair_cost']}")
 
-            # CSV download
-            df = pd.DataFrame(detections)
-            csv = df.to_csv(index=False)
-            st.download_button("📥 Download Report CSV", csv, "repair_report.csv", "text/csv")
-
-            # KB Insights (if any)
-            agent = DecisionAgent(policies_dir="policies")
-            primary = pick_primary_detection(detections)
-            if primary:
-                signal = detection_to_damage_signal(primary)
-                q = f"{signal.get('damage_type','')} {signal.get('severity','')} repair guidance checklist risks"
-                chunks = agent.retriever.retrieve(q, top_k=3)
-                insights = format_kb_insights(chunks, max_items=4)
-                if insights:
-                    st.markdown("---")
-                    st.subheader("📚 Knowledge Base Insights")
-                    for item in insights: st.write(f"- {item}")
+            # Download CSV
+            df_report = pd.DataFrame(report["damage_breakdown"])
+            csv = df_report.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Download Damage Report CSV", data=csv, file_name="damage_report.csv", mime="text/csv")
 
 # ---------------------- Run App ----------------------
 if __name__ == "__main__":
