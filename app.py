@@ -1,5 +1,4 @@
 from dotenv import load_dotenv
-
 load_dotenv()
 
 import os
@@ -27,7 +26,7 @@ try:
     from car_damage_detector import CarDamageDetector
     from utils import enhance_image, calculate_damage_stats
 except ImportError:
-    st.warning("Custom modules not found. Running in demo mode.")
+    # Removed popup entirely
     CarDamageDetector = None
 
 # ---------------------- Page setup ----------------------
@@ -73,29 +72,51 @@ def demo_damage_detection(image: Image.Image):
     img_with_annotations = img_array.copy()
     colors = {"Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255), "Broken Part": (255,0,0)}
 
-    return img_with_annotations, detections, colors
+    for d in detections:
+        x1, y1, x2, y2 = d["bbox"]
+        color = colors.get(d["type"], (255,255,0))
+        cv2.rectangle(img_with_annotations, (x1,y1), (x2,y2), color, 3)
+        label = f"{d['type']} ({d['confidence']:.2f})"
+        size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        cv2.rectangle(img_with_annotations, (x1, y1-size[1]-10), (x1+size[0], y1), color, -1)
+        cv2.putText(img_with_annotations, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+
+    return img_with_annotations, detections
 
 # ---------------------- Charts ----------------------
-def create_damage_distribution_chart(detections):
+def create_damage_distribution_chart(detections, selected_types):
+    filtered = [d for d in detections if d["type"] in selected_types]
     damage_counts = {}
-    for d in detections:
+    for d in filtered:
         damage_counts[d["type"]] = damage_counts.get(d["type"],0)+1
     fig = px.pie(values=list(damage_counts.values()), names=list(damage_counts.keys()), title="Damage Type Distribution")
-    fig.update_traces(textposition="inside", textinfo="percent+label", insidetextorientation='radial', sort=False)
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="rgba(255,255,255,0.86)"), title_font=dict(size=18))
+    fig.update_traces(textposition="inside", textinfo="percent+label")
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="rgba(255,255,255,0.86)"),
+        title_font=dict(size=18)
+    )
     return fig
 
-def create_severity_chart(detections):
+def create_severity_chart(detections, selected_types):
+    filtered = [d for d in detections if d["type"] in selected_types]
     severity_counts = {}
-    for d in detections:
+    for d in filtered:
         severity_counts[d["severity"]] = severity_counts.get(d["severity"],0)+1
     colors = {"Light":"#cfcfcf","Moderate":"#9a9a9a","Severe":"#f2f2f2"}
-    fig = go.Figure(data=[go.Bar(x=list(severity_counts.keys()), y=list(severity_counts.values()),
+    fig = go.Figure(data=[go.Bar(x=list(severity_counts.keys()),
+                                 y=list(severity_counts.values()),
                                  marker_color=[colors.get(k,"#8a8a8a") for k in severity_counts.keys()])])
-    fig.update_layout(title="Damage Severity Distribution", xaxis_title="Severity Level", yaxis_title="Number of Damages",
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font=dict(color="rgba(255,255,255,0.86)"), title_font=dict(size=18))
+    fig.update_layout(
+        title="Damage Severity Distribution",
+        xaxis_title="Severity Level",
+        yaxis_title="Number of Damages",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="rgba(255,255,255,0.86)"),
+        title_font=dict(size=18)
+    )
     return fig
 
 # ---------------------- Assessment Report ----------------------
@@ -166,7 +187,7 @@ def main():
         developer_mode = st.checkbox("Developer mode (show debug)", value=False)
         st.session_state["dev_mode"] = developer_mode
         confidence_threshold = st.slider("Confidence Threshold", 0.1,1.0,0.5,0.05)
-        damage_types = st.multiselect("Damage Types", ["Scratch","Dent","Broken Part","Paint Damage"],
+        damage_types = st.multiselect("Damage Types", ["Scratch","Dent","Broken Part","Paint Damage"], 
                                       default=["Scratch","Dent","Paint Damage"])
         enhance_image_option = st.checkbox("Enable Image Enhancement", value=True)
         show_confidence = st.checkbox("Display Confidence Scores", value=True)
@@ -189,100 +210,25 @@ def main():
                 import time
                 with st.spinner("Processing..."):
                     time.sleep(1)
-                    img_with_annotations, detections, colors = demo_damage_detection(image)
-
-                    # ---- APPLY DAMAGE TYPE FILTER ----
-                    filtered_detections = [d for d in detections if d["type"] in damage_types]
-
-                    # ---- DRAW ANNOTATIONS ----
-                    img_annotated = np.array(image).copy()
-                    for d in filtered_detections:
-                        x1, y1, x2, y2 = d["bbox"]
-                        color = colors.get(d["type"], (255,255,0))
-                        cv2.rectangle(img_annotated, (x1,y1), (x2,y2), color, 3)
-                        if show_confidence:
-                            label = f"{d['type']} ({d['confidence']:.2f})"
-                        else:
-                            label = f"{d['type']}"
-                        size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                        cv2.rectangle(img_annotated, (x1, y1-size[1]-10), (x1+size[0], y1), color, -1)
-                        cv2.putText(img_annotated, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-
-                    st.session_state.processed_image = img_annotated
-                    st.session_state.detections = filtered_detections
-
-                st.success(f"Found {len(filtered_detections)} damage areas.")
+                    processed_image, detections = demo_damage_detection(image)
+                    st.session_state.processed_image = processed_image
+                    st.session_state.detections = detections
+                st.success(f"Found {len(detections)} damage areas.")
 
     # Right: Results
     with col2:
         st.markdown("## Analysis Results")
-        if "detections" in st.session_state and st.session_state.detections:
+        if "detections" in st.session_state:
+            # Filter detections by selected damage types
+            selected_types = damage_types
+            filtered_detections = [d for d in st.session_state.detections if d["type"] in selected_types]
+
             st.image(st.session_state.processed_image, caption="Detected Damage Areas", use_container_width=True)
-            detections = st.session_state.detections
 
-            # Charts
-            st.plotly_chart(create_damage_distribution_chart(detections), use_container_width=True)
-            st.plotly_chart(create_severity_chart(detections), use_container_width=True)
-
-            # Report CSV & Repair Cost
-            report = generate_assessment_report(detections, st.session_state.image_info)
-            st.download_button("📥 Download Report CSV", data=pd.DataFrame([report["damage_breakdown"]]).to_csv(index=False),
-                               file_name="damage_report.csv", mime="text/csv")
-            st.info(f"💰 Estimated Total Repair Cost: ${report['estimated_repair_cost']}")
-
-            # Continue with Agentic KB, decision trace, repair story etc...
-            agent = DecisionAgent(policies_dir="policies")
-            primary = pick_primary_detection(detections)
-
-            if primary:
-                signal = detection_to_damage_signal(primary)
-                decision = agent.decide(signal)
-                trace = build_decision_trace(primary_detection=primary, signal=signal, decision=decision)
-                with st.expander("🧾 Decision Trace", expanded=True):
-                    for i, step in enumerate(trace["steps"],1):
-                        st.markdown(f"**{i}. {step['title']}**")
-                        for d in step["details"]:
-                            st.write(f"- {d}")
-
-                expl = build_customer_explanation(
-                    decision_action=decision.action,
-                    decision_reason=decision.reason,
-                    policy_refs=list(decision.policy_refs or []),
-                    next_steps=list(decision.next_steps or []),
-                    sop_text=getattr(decision,"evidence",None),
-                    signal=signal
-                )
-                badge_emoji = {"AUTO_APPROVE":"✅","HUMAN_REVIEW":"⚠️","ESCALATE":"🔺"}.get(decision.action,"ℹ️")
-                st.markdown(f"#### {badge_emoji} {decision.action}")
-                st.caption(expl["summary"])
-                if expl["why_bullets"]:
-                    st.write("**Why:**")
-                    for b in expl["why_bullets"]: st.write(f"- {b}")
-                if expl["next_steps"]:
-                    st.write("**Next steps:**")
-                    for s in expl["next_steps"]: st.write(f"- {s}")
-
-                # Before/After preview
-                st.markdown("---")
-                st.subheader("✨ Before / After Vision (Preview)")
-                preview_intensity = st.slider("Preview intensity", 0.0,1.0,0.65,0.05)
-                before_rgb = st.session_state.original_image
-                preview = make_repaired_preview(before_rgb, primary, intensity=preview_intensity)
-                cA, cB = st.columns(2)
-                with cA: st.image(before_rgb, caption="Before", use_container_width=True)
-                with cB: st.image(preview["after"], caption="After", use_container_width=True)
-                if preview.get("diff") is not None: st.image(preview["diff"], caption="Diff map", use_container_width=True)
-                if preview.get("mask") is not None:
-                    with st.expander("Mask applied for inpainting"): st.image(preview["mask"], use_container_width=True)
-
-                # Knowledge Base Insights
-                q = f"{signal.get('damage_type','')} {signal.get('severity','')} repair guidance checklist risks"
-                chunks = agent.retriever.retrieve(q, top_k=3)
-                insights = format_kb_insights(chunks, max_items=4)
-                if insights:
-                    st.markdown("---")
-                    st.subheader("📚 Knowledge Base Insights")
-                    for item in insights: st.write(f"- {item}")
+            if filtered_detections:
+                # Pie and severity charts
+                st.plotly_chart(create_damage_distribution_chart(st.session_state.detections, selected_types), use_container_width=True)
+                st.plotly_chart(create_severity_chart(st.session_state.detections, selected_types), use_container_width=True)
 
 # ---------------------- Run App ----------------------
 if __name__ == "__main__":
