@@ -1,4 +1,5 @@
 streamlit
+torch
 numpy
 pandas
 pillow
