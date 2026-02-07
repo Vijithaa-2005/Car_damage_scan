@@ -3,8 +3,6 @@ import numpy as np
 import pandas as pd
 import cv2
 from PIL import Image
-from datetime import datetime
-import os
 
 # --------------------------------
 # PAGE CONFIG (WHITE BACKGROUND)
@@ -25,7 +23,7 @@ body, .stApp {
 
 # --------------------------------
 # TRY LOADING ARTEMXDATA MODEL
-# (SILENT – NO ERROR TO USER)
+# (SILENT – NO CRASH)
 # --------------------------------
 MODEL_AVAILABLE = False
 model = None
@@ -38,7 +36,7 @@ except Exception:
     MODEL_AVAILABLE = False
 
 # --------------------------------
-# FALLBACK DAMAGE ANALYSIS
+# FALLBACK ANALYSIS (SAFE)
 # --------------------------------
 def fallback_analysis(image):
     img = np.array(image)
@@ -62,14 +60,14 @@ def fallback_analysis(image):
     ]
 
     cv2.rectangle(img, (int(w*0.2), int(h*0.35)),
-                  (int(w*0.45), int(h*0.6)), (255,0,0), 2)
+                  (int(w*0.45), int(h*0.6)), (255, 0, 0), 2)
     cv2.rectangle(img, (int(w*0.55), int(h*0.4)),
-                  (int(w*0.8), int(h*0.55)), (0,255,0), 2)
+                  (int(w*0.8), int(h*0.55)), (0, 255, 0), 2)
 
     return img, detections
 
 # --------------------------------
-# REAL MODEL ANALYSIS (IF EXISTS)
+# MODEL ANALYSIS (IF AVAILABLE)
 # --------------------------------
 def model_analysis(image):
     img_np = np.array(image)
@@ -122,7 +120,7 @@ if uploaded_files:
         all_reports.append(df)
 
 # --------------------------------
-# DOWNLOAD REPORT (CSV)
+# DOWNLOAD REPORT (CSV – NO datetime)
 # --------------------------------
 if all_reports:
     final_df = pd.concat(all_reports, ignore_index=True)
@@ -131,6 +129,6 @@ if all_reports:
     st.download_button(
         "⬇️ Download Damage Assessment Report",
         data=csv,
-        file_name=f"damage_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        file_name="damage_report.csv",
         mime="text/csv"
     )
