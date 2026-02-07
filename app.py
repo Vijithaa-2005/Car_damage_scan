@@ -1,35 +1,21 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-import os
 import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import pandas as pd
-from datetime import datetime
-import textwrap
-from streamlit.components.v1 import html as st_html
 
+# =========================
+# ARTEMEDX / AGENTIC IMPORTS
+# =========================
 from agentic.trace import build_decision_trace
 from agentic.decision_agent import DecisionAgent
 from agentic.adapters import pick_primary_detection, detection_to_damage_signal
-from agentic.explainer import (
-    build_customer_explanation,
-    format_kb_insights,
-    build_expert_insight,
-)
 from agentic.strategies import build_repair_strategies, build_damage_story
-from agentic.vision.after_inpaint import make_repaired_after_preview
-
-try:
-    from car_damage_detector import CarDamageDetector
-    from utils import enhance_image, calculate_damage_stats
-except ImportError:
-    CarDamageDetector = None
-
 
 # =========================
 # PAGE CONFIG
@@ -37,219 +23,163 @@ except ImportError:
 st.set_page_config(
     page_title="Car Damage Assessment AI",
     page_icon="🚗",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="wide"
 )
 
 # =========================
 # WHITE BACKGROUND THEME
 # =========================
-st.markdown(
-    """
+st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
-
 .stApp {
-    background-color: #ffffff;
-    color: #000000;
+    background-color: white;
+    color: black;
 }
-
-h1, h2, h3, h4 {
-    color: #000000;
-    letter-spacing: -0.04em;
-}
-
-.stMarkdown p {
-    color: #333333;
-}
-
 section[data-testid="stSidebar"] {
-    background-color: #f7f7f7;
-    border-right: 1px solid #e0e0e0;
+    background-color: #f5f5f5;
 }
-
-[data-testid="stMetric"] {
-    background-color: #ffffff;
-    border: 1px solid #e5e5e5;
-    border-radius: 12px;
+h1,h2,h3 {
+    color: black;
 }
-
-div[data-testid="stExpander"] {
-    border: 1px solid #e5e5e5;
-    border-radius: 12px;
-    background-color: #ffffff;
-}
-
 .stButton button {
-    background-color: #000000 !important;
-    color: #ffffff !important;
-    border-radius: 10px;
-    font-weight: 700;
-}
-
-[data-testid="stDownloadButton"] button {
-    background-color: #ffffff !important;
-    color: #000000 !important;
-    border: 1px solid #cccccc !important;
-    border-radius: 10px;
-    font-weight: 600;
-}
-
-.js-plotly-plot {
-    background-color: #ffffff !important;
-}
-
-#MainMenu, footer, header {
-    visibility: hidden;
+    background-color: black;
+    color: white;
+    font-weight: bold;
 }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 # =========================
 # HERO
 # =========================
-def render_hero():
-    st.markdown(
-        """
-        <div style="padding:20px; border:1px solid #e5e5e5; border-radius:16px;">
-            <h1>Car Damage Assessment AI</h1>
-            <p>
-                AI-assisted vehicle damage analysis using computer vision and decision intelligence.
-                Upload an image to receive damage insights, severity, and repair guidance.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+st.markdown("""
+<h1>Car Damage Assessment AI</h1>
+<p>
+AI-assisted vehicle damage analysis using computer vision principles and
+decision intelligence.
+</p>
+""", unsafe_allow_html=True)
 
 # =========================
-# DEMO DAMAGE DETECTION
+# SIMPLE IMAGE-BASED HEURISTIC
+# (NO TORCH, NO MODEL)
 # =========================
-def demo_damage_detection(image: Image.Image):
-    img_array = np.array(image)
-    h, w = img_array.shape[:2]
+def analyze_image_heuristic(image: Image.Image):
+    img = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 80, 160)
 
-    detections = [
-        {
+    edge_density = np.sum(edges > 0) / edges.size
+
+    detections = []
+
+    h, w = img.shape[:2]
+
+    if edge_density > 0.08:
+        detections.append({
             "type": "Dent",
+            "severity": "Severe",
+            "confidence": 0.85,
+            "bbox": [int(w*0.25), int(h*0.3), int(w*0.55), int(h*0.6)],
+            "area_percentage": 9.5,
+            "estimated_cost": 900
+        })
+    elif edge_density > 0.04:
+        detections.append({
+            "type": "Scratch",
             "severity": "Moderate",
-            "confidence": 0.78,
-            "bbox": [int(w*0.25), int(h*0.35), int(w*0.45), int(h*0.55)],
-            "area_percentage": 6.4,
-            "estimated_cost": 420,
-        }
-    ]
+            "confidence": 0.72,
+            "bbox": [int(w*0.3), int(h*0.4), int(w*0.7), int(h*0.5)],
+            "area_percentage": 5.2,
+            "estimated_cost": 400
+        })
+    else:
+        detections.append({
+            "type": "Surface Mark",
+            "severity": "Mild",
+            "confidence": 0.6,
+            "bbox": [int(w*0.35), int(h*0.45), int(w*0.65), int(h*0.55)],
+            "area_percentage": 2.1,
+            "estimated_cost": 150
+        })
 
-    annotated = img_array.copy()
+    annotated = img.copy()
     for d in detections:
-        x1, y1, x2, y2 = d["bbox"]
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 3)
+        x1,y1,x2,y2 = d["bbox"]
+        cv2.rectangle(annotated,(x1,y1),(x2,y2),(255,0,0),3)
 
     return annotated, detections
-
 
 # =========================
 # CHARTS
 # =========================
-def create_damage_distribution_chart(detections):
-    counts = {}
-    for d in detections:
-        counts[d["type"]] = counts.get(d["type"], 0) + 1
-
-    fig = px.pie(
-        values=list(counts.values()),
-        names=list(counts.keys()),
-        title="Damage Type Distribution",
-    )
-    fig.update_layout(
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        font=dict(color="black"),
-    )
+def damage_chart(detections):
+    df = pd.DataFrame(detections)
+    fig = px.pie(df, names="type", title="Damage Type Distribution")
+    fig.update_layout(paper_bgcolor="white")
     return fig
 
-
-def create_severity_chart(detections):
-    sev = {}
-    for d in detections:
-        sev[d["severity"]] = sev.get(d["severity"], 0) + 1
-
-    fig = go.Figure([go.Bar(x=list(sev.keys()), y=list(sev.values()))])
-    fig.update_layout(
-        title="Severity Distribution",
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        font=dict(color="black"),
-    )
-    return fig
-
+# =========================
+# SIDEBAR
+# =========================
+st.sidebar.header("Upload Image")
+uploaded = st.sidebar.file_uploader(
+    "Upload vehicle image",
+    type=["jpg","png","jpeg"]
+)
 
 # =========================
-# MAIN
+# MAIN LOGIC
 # =========================
-def main():
-    render_hero()
+if uploaded:
+    image = Image.open(uploaded)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
-    with st.sidebar:
-        st.markdown("## Configuration")
-        st.slider("Confidence Threshold", 0.1, 1.0, 0.5, 0.05)
-        st.checkbox("Enable Image Enhancement", value=True)
-        st.checkbox("Generate Assessment Report", value=True)
+    if st.button("Analyze Damage", use_container_width=True):
+        processed, detections = analyze_image_heuristic(image)
 
-    col1, col2 = st.columns(2)
+        st.image(processed, caption="Detected Damage", use_container_width=True)
 
-    with col1:
-        st.subheader("Upload Image")
-        uploaded = st.file_uploader("Upload vehicle image", type=["jpg", "png", "jpeg"])
+        # -------------------------
+        # ARTEMEDX AGENT DECISION
+        # -------------------------
+        agent = DecisionAgent(policies_dir="policies")
+        primary = pick_primary_detection(detections)
 
-        if uploaded:
-            image = Image.open(uploaded)
-            st.image(image, use_container_width=True)
+        if primary:
+            signal = detection_to_damage_signal(primary)
+            decision = agent.decide(signal)
 
-            if st.button("Analyze Damage", use_container_width=True):
-                processed, detections = demo_damage_detection(image)
-                st.session_state.processed = processed
-                st.session_state.detections = detections
-                st.session_state.original = np.array(image)
-                st.session_state.image_info = image.size
+            st.subheader("Decision")
+            st.write(f"**Action:** {decision.action}")
+            st.write(f"**Reason:** {decision.reason}")
 
-    with col2:
-        st.subheader("Results")
+            # ✅ FIXED FUNCTION CALL
+            trace = build_decision_trace(
+                primary_detection=primary,
+                signal=signal,
+                decision=decision
+            )
 
-        if "detections" in st.session_state:
-            st.image(st.session_state.processed, use_container_width=True)
+            with st.expander("Decision Trace"):
+                st.json(trace)
 
-            detections = st.session_state.detections
-            agent = DecisionAgent(policies_dir="policies")
-            primary = pick_primary_detection(detections)
+            story = build_damage_story(primary)
+            strategies = build_repair_strategies(primary)
 
-            if primary:
-                signal = detection_to_damage_signal(primary)
-                decision = agent.decide(signal)
+            st.subheader("Damage Impact")
+            for c in story["consequences"]:
+                st.write(f"- {c}")
 
-                st.markdown(f"### Decision: {decision.action}")
-                st.write(decision.reason)
+            st.subheader("Repair Strategies")
+            for s in strategies:
+                with st.expander(s.name):
+                    st.write(s.summary)
 
-                trace = build_decision_trace(primary, signal, decision)
-                with st.expander("Decision Trace"):
-                    st.json(trace)
+        st.plotly_chart(damage_chart(detections), use_container_width=True)
 
-            colA, colB = st.columns(2)
-            with colA:
-                st.plotly_chart(create_damage_distribution_chart(detections), use_container_width=True)
-            with colB:
-                st.plotly_chart(create_severity_chart(detections), use_container_width=True)
+        st.subheader("Assessment Table")
+        st.dataframe(pd.DataFrame(detections), use_container_width=True)
 
-        else:
-            st.info("Upload and analyze an image to view results.")
-
-
-if __name__ == "__main__":
-    main()
+else:
+    st.info("Please upload a vehicle image to begin analysis.")
