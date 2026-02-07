@@ -3,118 +3,144 @@ import cv2
 import numpy as np
 from PIL import Image
 from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from fpdf import FPDF
 import tempfile
-import os
+import random
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="Car Damage Assessment AI",
+    page_icon="🚗",
     layout="wide"
 )
 
+# ---------------- WHITE THEME ----------------
 st.markdown("""
 <style>
-body, .stApp {
+.stApp {
     background-color: white;
+    color: black;
+}
+h1, h2, h3 {
     color: black;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ---------------- TITLE ----------------
 st.title("🚗 Car Damage Assessment AI")
-st.caption("Beginner-friendly | Multi-image | Real-time | PDF report")
+st.write("Upload **multiple car images**, analyze damage, and download **repair suggestions as PDF**.")
 
 # ---------------- SIMPLE DAMAGE LOGIC ----------------
-def analyze_damage(image_np):
-    h, w = image_np.shape[:2]
+def analyze_image(image):
+    img = np.array(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    damages = []
+    edges = cv2.Canny(gray, 100, 200)
+    edge_density = np.sum(edges > 0) / edges.size
 
-    damages.append({
-        "type": "Scratch",
-        "severity": "Light",
-        "confidence": round(np.random.uniform(0.70, 0.90), 2),
-        "repair": "Polishing or repainting required",
-        "cost": "₹1,500 – ₹3,000"
-    })
+    if edge_density < 0.02:
+        severity = "Light"
+        damage_type = random.choice(["Minor Scratch", "Paint Fade"])
+        cost = random.randint(100, 300)
+    elif edge_density < 0.05:
+        severity = "Moderate"
+        damage_type = random.choice(["Dent", "Deep Scratch"])
+        cost = random.randint(400, 800)
+    else:
+        severity = "Severe"
+        damage_type = random.choice(["Body Damage", "Broken Panel"])
+        cost = random.randint(1000, 2000)
 
-    damages.append({
-        "type": "Dent",
-        "severity": "Moderate",
-        "confidence": round(np.random.uniform(0.65, 0.85), 2),
-        "repair": "Dent removal with panel reshaping",
-        "cost": "₹4,000 – ₹8,000"
-    })
+    suggestion_map = {
+        "Minor Scratch": "Polishing and paint touch-up recommended.",
+        "Paint Fade": "Repainting of affected area suggested.",
+        "Dent": "Dent removal and repainting required.",
+        "Deep Scratch": "Sanding and repainting required.",
+        "Body Damage": "Panel replacement may be required.",
+        "Broken Panel": "Immediate replacement advised."
+    }
 
-    return damages
+    return {
+        "damage_type": damage_type,
+        "severity": severity,
+        "estimated_cost": cost,
+        "suggestion": suggestion_map[damage_type]
+    }
 
-# ---------------- PDF GENERATION ----------------
-def generate_pdf(all_results):
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    c = canvas.Canvas(temp.name, pagesize=A4)
+# ---------------- PDF GENERATOR ----------------
+def generate_pdf(report_data):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
 
-    text = c.beginText(40, 800)
-    text.setFont("Helvetica", 11)
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Car Damage Assessment Report", ln=True)
 
-    text.textLine("Car Damage Assessment Report")
-    text.textLine(f"Generated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}")
-    text.textLine("-" * 60)
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 10, f"Generated on: {datetime.now()}", ln=True)
+    pdf.ln(5)
 
-    for idx, result in enumerate(all_results, 1):
-        text.textLine(f"\nImage {idx}")
-        for d in result:
-            text.textLine(f"• Damage Type: {d['type']}")
-            text.textLine(f"  Severity: {d['severity']}")
-            text.textLine(f"  Confidence: {d['confidence']}")
-            text.textLine(f"  Repair: {d['repair']}")
-            text.textLine(f"  Estimated Cost: {d['cost']}")
-            text.textLine("")
+    for idx, item in enumerate(report_data, 1):
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 10, f"Image {idx}", ln=True)
 
-    c.drawText(text)
-    c.showPage()
-    c.save()
+        pdf.set_font("Arial", "", 11)
+        pdf.multi_cell(0, 8, 
+            f"Damage Type: {item['damage_type']}\n"
+            f"Severity: {item['severity']}\n"
+            f"Estimated Repair Cost: ${item['estimated_cost']}\n"
+            f"Repair Suggestion: {item['suggestion']}"
+        )
+        pdf.ln(4)
 
-    return temp.name
+    file_path = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+    pdf.output(file_path)
+    return file_path
 
-# ---------------- UI ----------------
+# ---------------- IMAGE UPLOAD ----------------
 uploaded_files = st.file_uploader(
     "Upload car images",
     type=["jpg", "jpeg", "png"],
     accept_multiple_files=True
 )
 
-all_results = []
+results = []
 
 if uploaded_files:
-    st.success(f"{len(uploaded_files)} image(s) uploaded")
+    st.subheader("🔍 Analysis Results")
 
-    for idx, file in enumerate(uploaded_files, 1):
+    for i, file in enumerate(uploaded_files):
         image = Image.open(file).convert("RGB")
-        image_np = np.array(image)
+        result = analyze_image(image)
+        results.append(result)
 
-        st.subheader(f"Image {idx}")
-        st.image(image, use_container_width=True)
+        col1, col2 = st.columns([1, 1])
 
-        damages = analyze_damage(image_np)
-        all_results.append(damages)
+        with col1:
+            st.image(image, caption=f"Image {i+1}", use_container_width=True)
 
-        for d in damages:
-            with st.expander(f"{d['type']} ({d['severity']})"):
-                st.write(f"**Confidence:** {d['confidence']}")
-                st.write(f"**Repair Suggestion:** {d['repair']}")
-                st.write(f"**Estimated Cost:** {d['cost']}")
+        with col2:
+            st.markdown(f"""
+            **Damage Type:** {result['damage_type']}  
+            **Severity:** {result['severity']}  
+            **Estimated Cost:** ${result['estimated_cost']}  
+            **Suggestion:** {result['suggestion']}
+            """)
 
-    pdf_path = generate_pdf(all_results)
+    # ---------------- PDF DOWNLOAD ----------------
+    st.markdown("---")
+    st.subheader("📄 Download Repair Report")
+
+    pdf_path = generate_pdf(results)
 
     with open(pdf_path, "rb") as f:
         st.download_button(
-            "⬇️ Download Repair Report (PDF)",
-            f,
+            label="⬇️ Download PDF Report",
+            data=f,
             file_name="car_damage_report.pdf",
             mime="application/pdf"
         )
 
 else:
-    st.info("Upload one or more car images to begin analysis.")
+    st.info("Upload one or more car images to start analysis.")
