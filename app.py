@@ -26,8 +26,7 @@ try:
     from car_damage_detector import CarDamageDetector
     from utils import enhance_image, calculate_damage_stats
 except ImportError:
-    # Removed popup entirely
-    CarDamageDetector = None
+    CarDamageDetector = None  # removed popup
 
 # ---------------------- Page setup ----------------------
 st.set_page_config(
@@ -120,22 +119,23 @@ def create_severity_chart(detections, selected_types):
     return fig
 
 # ---------------------- Assessment Report ----------------------
-def generate_assessment_report(detections, image_info):
-    total_cost = sum([d.get("estimated_cost",0) for d in detections])
-    total_area = sum([d["area_percentage"] for d in detections])
-    avg_confidence = np.mean([d["confidence"] for d in detections])
+def generate_assessment_report(detections, image_info, selected_types):
+    filtered = [d for d in detections if d["type"] in selected_types]
+    total_cost = sum([d.get("estimated_cost",0) for d in filtered])
+    total_area = sum([d["area_percentage"] for d in filtered])
+    avg_confidence = np.mean([d["confidence"] for d in filtered]) if filtered else 0
     severity_priority = {"Severe":3, "Moderate":2, "Light":1}
-    highest_severity = max([severity_priority.get(d["severity"],0) for d in detections])
+    highest_severity = max([severity_priority.get(d["severity"],0) for d in filtered], default=0)
     severity_names = {3:"Severe",2:"Moderate",1:"Light"}
     report = {
         "timestamp": datetime.now(),
         "image_dimensions": image_info,
-        "total_damages": len(detections),
+        "total_damages": len(filtered),
         "total_affected_area": total_area,
         "estimated_repair_cost": total_cost,
         "average_confidence": avg_confidence,
         "highest_severity": severity_names.get(highest_severity,"None"),
-        "damage_breakdown": detections
+        "damage_breakdown": filtered
     }
     return report
 
@@ -219,16 +219,25 @@ def main():
     with col2:
         st.markdown("## Analysis Results")
         if "detections" in st.session_state:
-            # Filter detections by selected damage types
             selected_types = damage_types
             filtered_detections = [d for d in st.session_state.detections if d["type"] in selected_types]
 
             st.image(st.session_state.processed_image, caption="Detected Damage Areas", use_container_width=True)
 
             if filtered_detections:
-                # Pie and severity charts
+                # Charts
                 st.plotly_chart(create_damage_distribution_chart(st.session_state.detections, selected_types), use_container_width=True)
                 st.plotly_chart(create_severity_chart(st.session_state.detections, selected_types), use_container_width=True)
+
+                # Assessment report
+                report = generate_assessment_report(st.session_state.detections, st.session_state.image_info, selected_types)
+                st.markdown(f"### 💰 Estimated Repair Cost: ${report['estimated_repair_cost']:.2f}")
+                st.markdown(f"**Total damages:** {report['total_damages']}  |  **Total affected area:** {report['total_affected_area']:.2f}%  |  **Highest severity:** {report['highest_severity']}")
+
+                # Download CSV
+                df_report = pd.DataFrame(report["damage_breakdown"])
+                csv = df_report.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Download Damage Report CSV", data=csv, file_name="damage_report.csv", mime="text/csv")
 
 # ---------------------- Run App ----------------------
 if __name__ == "__main__":
