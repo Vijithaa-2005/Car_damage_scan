@@ -22,12 +22,11 @@ from agentic.explainer import build_customer_explanation, format_kb_insights
 from agentic.strategies import build_repair_strategies, build_damage_story
 from agentic.vision.after_inpaint import make_repaired_after_preview
 
-# Custom modules (demo fallback)
+# Custom modules (demo fallback) — removed warning popup
 try:
     from car_damage_detector import CarDamageDetector
     from utils import enhance_image, calculate_damage_stats
 except ImportError:
-    st.warning("Custom modules not found. Running in demo mode.")
     CarDamageDetector = None
 
 # ---------------------- Page setup ----------------------
@@ -199,6 +198,23 @@ def main():
                     st.session_state.detections = detections
                 st.success(f"Found {len(detections)} damage areas.")
 
+                # --- Repair cost summary and CSV download ---
+                total_cost = sum(d['estimated_cost'] for d in detections)
+                st.subheader(f"💰 Total Estimated Repair Cost: ${total_cost}")
+
+                # Pie chart for damage type
+                st.plotly_chart(create_damage_distribution_chart(detections), use_container_width=True)
+
+                # CSV download
+                df = pd.DataFrame(detections)
+                csv_data = df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Damage Data as CSV",
+                    data=csv_data,
+                    file_name=f"damage_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+
     # Right: Results
     with col2:
         st.markdown("## Analysis Results")
@@ -277,7 +293,7 @@ def main():
                 if preview.get("mask") is not None:
                     with st.expander("Mask applied for inpainting"): st.image(preview["mask"], use_container_width=True)
 
-                # Knowledge Base Insights
+                # Knowledge Base Insights (kept as-is)
                 q = f"{signal.get('damage_type','')} {signal.get('severity','')} repair guidance checklist risks"
                 chunks = agent.retriever.retrieve(q, top_k=3)
                 insights = format_kb_insights(chunks, max_items=4)
