@@ -1,15 +1,8 @@
-from dotenv import load_dotenv
-load_dotenv()
-
 import streamlit as st
 import numpy as np
 from PIL import Image
 import pandas as pd
 from datetime import datetime
-
-from agentic.decision_agent import DecisionAgent
-from agentic.adapters import detection_to_damage_signal
-from agentic.strategies import build_damage_story, build_repair_strategies
 
 from car_damage_detector import CarDamageDetector
 
@@ -23,7 +16,7 @@ st.set_page_config(
 )
 
 # =========================
-# Load model (REAL)
+# Load model
 # =========================
 @st.cache_resource
 def load_model():
@@ -32,22 +25,23 @@ def load_model():
 model = load_model()
 
 # =========================
-# Severity Scoring
+# Simple decision logic
 # =========================
-def severity_score(d):
-    score = d["confidence"] * (d["area_percentage"] / 10)
+def decide_action(detections):
+    has_severe = any(d["severity"] == "Severe" for d in detections)
+    has_moderate = any(d["severity"] == "Moderate" for d in detections)
+    has_multiple = len(detections) > 1
 
-    if d["severity"] == "Mild":
-        score *= 0.8
-    elif d["severity"] == "Moderate":
-        score *= 1.2
-    elif d["severity"] == "Severe":
-        score *= 1.6
+    if has_severe:
+        return "REJECT", "Severe damage detected. Claim cannot be auto-approved."
 
-    return score
+    if has_multiple or has_moderate:
+        return "HUMAN_REVIEW", "Moderate or multiple damages detected. Manual review required."
+
+    return "AUTO_APPROVE", "Only minor damage detected."
 
 # =========================
-# Main App
+# Main app
 # =========================
 def main():
 
@@ -64,7 +58,7 @@ def main():
     )
 
     if not uploaded_files:
-        st.info("Upload one or more vehicle images to begin.")
+        st.info("Upload one or more images to start analysis.")
         return
 
     all_detections = []
@@ -72,7 +66,7 @@ def main():
 
     if st.button("Analyze Damage", type="primary"):
 
-        with st.spinner("Running AI damage assessment..."):
+        with st.spinner("Analyzing images..."):
 
             for uploaded in uploaded_files:
                 image = Image.open(uploaded).convert("RGB")
@@ -85,7 +79,6 @@ def main():
 
                 for d in detections:
                     d["image"] = uploaded.name
-                    d["severity_score"] = severity_score(d)
 
                 all_detections.extend(detections)
                 processed_images.append((uploaded.name, processed))
@@ -95,18 +88,12 @@ def main():
         return
 
     # =========================
-    # AGENTIC DECISION
+    # Decision
     # =========================
-    agent = DecisionAgent(policies_dir="policies")
+    decision, reason = decide_action(all_detections)
 
-    signals = [detection_to_damage_signal(d) for d in all_detections]
-    decision = agent.decide(signals)
-
-    # =========================
-    # OUTPUT
-    # =========================
-    st.subheader(f"Decision: {decision.action}")
-    st.caption(decision.reason)
+    st.subheader(f"Decision: {decision}")
+    st.caption(reason)
 
     # =========================
     # Images
@@ -116,7 +103,7 @@ def main():
         st.image(img, caption=name, use_container_width=True)
 
     # =========================
-    # Summary Metrics
+    # Summary
     # =========================
     st.markdown("## Assessment Summary")
 
@@ -124,40 +111,29 @@ def main():
 
     c1.metric("Images", len(uploaded_files))
     c2.metric("Damages", len(all_detections))
-    c3.metric("Avg Confidence",
-              f"{np.mean([d['confidence'] for d in all_detections]):.2f}")
-    c4.metric("Total Cost",
-              f"₹{sum(d['estimated_cost'] for d in all_detections)}")
+    c3.metric(
+        "Avg Confidence",
+        f"{np.mean([d['confidence'] for d in all_detections]):.2f}"
+    )
+    c4.metric(
+        "Estimated Cost",
+        f"₹{sum(d['estimated_cost'] for d in all_detections)}"
+    )
 
     # =========================
-    # Damage Table
+    # Report
     # =========================
     df = pd.DataFrame(all_detections)[[
         "image", "type", "severity",
-        "confidence", "area_percentage",
-        "estimated_cost", "severity_score"
+        "confidence", "area_percentage", "estimated_cost"
     ]]
 
     st.markdown("## Damage Report")
     st.dataframe(df, use_container_width=True)
 
-    # =========================
-    # Repair Strategies
-    # =========================
-    st.markdown("## Repair Recommendations")
-
-    for d in all_detections:
-        strategies = build_repair_strategies(d)
-        with st.expander(f"{d['image']} – {d['type']} ({d['severity']})"):
-            for s in strategies:
-                st.write(f"• {s.summary}")
-
-    # =========================
-    # Export
-    # =========================
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Download Assessment Report",
+        "Download Report",
         csv,
         f"damage_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         "text/csv"
