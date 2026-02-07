@@ -22,11 +22,12 @@ from agentic.explainer import build_customer_explanation, format_kb_insights
 from agentic.strategies import build_repair_strategies, build_damage_story
 from agentic.vision.after_inpaint import make_repaired_after_preview
 
-# Custom modules (demo fallback) — removed warning popup
+# Custom modules (demo fallback)
 try:
     from car_damage_detector import CarDamageDetector
     from utils import enhance_image, calculate_damage_stats
 except ImportError:
+    st.warning("Custom modules not found. Running in demo mode.")
     CarDamageDetector = None
 
 # ---------------------- Page setup ----------------------
@@ -72,16 +73,7 @@ def demo_damage_detection(image: Image.Image):
     img_with_annotations = img_array.copy()
     colors = {"Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255), "Broken Part": (255,0,0)}
 
-    for d in detections:
-        x1, y1, x2, y2 = d["bbox"]
-        color = colors.get(d["type"], (255,255,0))
-        cv2.rectangle(img_with_annotations, (x1,y1), (x2,y2), color, 3)
-        label = f"{d['type']} ({d['confidence']:.2f})"
-        size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        cv2.rectangle(img_with_annotations, (x1, y1-size[1]-10), (x1+size[0], y1), color, -1)
-        cv2.putText(img_with_annotations, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-
-    return img_with_annotations, detections
+    return img_with_annotations, detections, colors
 
 # ---------------------- Charts ----------------------
 def create_damage_distribution_chart(detections):
@@ -89,8 +81,9 @@ def create_damage_distribution_chart(detections):
     for d in detections:
         damage_counts[d["type"]] = damage_counts.get(d["type"],0)+1
     fig = px.pie(values=list(damage_counts.values()), names=list(damage_counts.keys()), title="Damage Type Distribution")
-    fig.update_traces(textposition="inside", textinfo="percent+label")
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="rgba(255,255,255,0.86)"), title_font=dict(size=18))
+    fig.update_traces(textposition="inside", textinfo="percent+label", insidetextorientation='radial', sort=False)
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="rgba(255,255,255,0.86)"), title_font=dict(size=18))
     return fig
 
 def create_severity_chart(detections):
@@ -98,9 +91,11 @@ def create_severity_chart(detections):
     for d in detections:
         severity_counts[d["severity"]] = severity_counts.get(d["severity"],0)+1
     colors = {"Light":"#cfcfcf","Moderate":"#9a9a9a","Severe":"#f2f2f2"}
-    fig = go.Figure(data=[go.Bar(x=list(severity_counts.keys()), y=list(severity_counts.values()), marker_color=[colors.get(k,"#8a8a8a") for k in severity_counts.keys()])])
+    fig = go.Figure(data=[go.Bar(x=list(severity_counts.keys()), y=list(severity_counts.values()),
+                                 marker_color=[colors.get(k,"#8a8a8a") for k in severity_counts.keys()])])
     fig.update_layout(title="Damage Severity Distribution", xaxis_title="Severity Level", yaxis_title="Number of Damages",
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="rgba(255,255,255,0.86)"), title_font=dict(size=18))
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color="rgba(255,255,255,0.86)"), title_font=dict(size=18))
     return fig
 
 # ---------------------- Assessment Report ----------------------
@@ -171,7 +166,8 @@ def main():
         developer_mode = st.checkbox("Developer mode (show debug)", value=False)
         st.session_state["dev_mode"] = developer_mode
         confidence_threshold = st.slider("Confidence Threshold", 0.1,1.0,0.5,0.05)
-        damage_types = st.multiselect("Damage Types", ["Scratches","Dents","Broken Parts","Paint Damage"], default=["Scratches","Dents","Paint Damage"])
+        damage_types = st.multiselect("Damage Types", ["Scratch","Dent","Broken Part","Paint Damage"],
+                                      default=["Scratch","Dent","Paint Damage"])
         enhance_image_option = st.checkbox("Enable Image Enhancement", value=True)
         show_confidence = st.checkbox("Display Confidence Scores", value=True)
         generate_report = st.checkbox("Generate Assessment Report", value=True)
@@ -193,34 +189,48 @@ def main():
                 import time
                 with st.spinner("Processing..."):
                     time.sleep(1)
-                    processed_image, detections = demo_damage_detection(image)
-                    st.session_state.processed_image = processed_image
-                    st.session_state.detections = detections
-                st.success(f"Found {len(detections)} damage areas.")
+                    img_with_annotations, detections, colors = demo_damage_detection(image)
 
-                # --- Repair cost summary and CSV download ---
-                total_cost = sum(d['estimated_cost'] for d in detections)
-                st.subheader(f"💰 Total Estimated Repair Cost: ${total_cost}")
+                    # ---- APPLY DAMAGE TYPE FILTER ----
+                    filtered_detections = [d for d in detections if d["type"] in damage_types]
 
-                # Pie chart for damage type
-                st.plotly_chart(create_damage_distribution_chart(detections), use_container_width=True)
+                    # ---- DRAW ANNOTATIONS ----
+                    img_annotated = np.array(image).copy()
+                    for d in filtered_detections:
+                        x1, y1, x2, y2 = d["bbox"]
+                        color = colors.get(d["type"], (255,255,0))
+                        cv2.rectangle(img_annotated, (x1,y1), (x2,y2), color, 3)
+                        if show_confidence:
+                            label = f"{d['type']} ({d['confidence']:.2f})"
+                        else:
+                            label = f"{d['type']}"
+                        size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        cv2.rectangle(img_annotated, (x1, y1-size[1]-10), (x1+size[0], y1), color, -1)
+                        cv2.putText(img_annotated, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
 
-                # CSV download
-                df = pd.DataFrame(detections)
-                csv_data = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Damage Data as CSV",
-                    data=csv_data,
-                    file_name=f"damage_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
+                    st.session_state.processed_image = img_annotated
+                    st.session_state.detections = filtered_detections
+
+                st.success(f"Found {len(filtered_detections)} damage areas.")
 
     # Right: Results
     with col2:
         st.markdown("## Analysis Results")
-        if "detections" in st.session_state:
+        if "detections" in st.session_state and st.session_state.detections:
             st.image(st.session_state.processed_image, caption="Detected Damage Areas", use_container_width=True)
             detections = st.session_state.detections
+
+            # Charts
+            st.plotly_chart(create_damage_distribution_chart(detections), use_container_width=True)
+            st.plotly_chart(create_severity_chart(detections), use_container_width=True)
+
+            # Report CSV & Repair Cost
+            report = generate_assessment_report(detections, st.session_state.image_info)
+            st.download_button("📥 Download Report CSV", data=pd.DataFrame([report["damage_breakdown"]]).to_csv(index=False),
+                               file_name="damage_report.csv", mime="text/csv")
+            st.info(f"💰 Estimated Total Repair Cost: ${report['estimated_repair_cost']}")
+
+            # Continue with Agentic KB, decision trace, repair story etc...
             agent = DecisionAgent(policies_dir="policies")
             primary = pick_primary_detection(detections)
 
@@ -252,34 +262,6 @@ def main():
                     st.write("**Next steps:**")
                     for s in expl["next_steps"]: st.write(f"- {s}")
 
-                # Render actions
-                from functools import partial
-                render_decision_actions_partial = partial(lambda d,p: st.info("Action UI demo")) # placeholder
-                render_decision_actions_partial(decision, primary)
-
-                # Damage story & strategy
-                st.markdown("---")
-                st.subheader("🧠 Damage Story & Repair Strategy")
-                story = build_damage_story(primary)
-                strategies = build_repair_strategies(primary)
-                col_s1, col_s2 = st.columns([1.15,0.85])
-                with col_s1:
-                    st.subheader("Damage Story")
-                    st.caption(f"Severity: **{story['severity']}** · Type: **{story['damage_type']}** · Confidence: **{story['confidence']:.2f}**")
-                    st.write("**Likely consequences:**")
-                    for c in story["consequences"]: st.write(f"- {c}")
-                    st.info(f"**Safety note:** {story['safety_note']}")
-                    st.write(f"**Resale impact:** {story['resale_impact'].upper()}")
-                with col_s2:
-                    st.subheader("Repair Strategy Simulator")
-                    for s in strategies:
-                        with st.expander(f"{s.name} · {s.risk_level} risk"):
-                            st.write(s.summary)
-                            st.write(f"**ETA:** {s.eta_days[0]}–{s.eta_days[1]} days" if s.eta_days[1]<999 else f"**ETA:** {s.eta_days[0]}+ days")
-                            st.write(f"**Estimated cost:** ${s.cost_usd[0]}–${s.cost_usd[1]}" if s.cost_usd[1]>0 else "**Estimated cost:** $0 now")
-                            st.write("**Steps:**")
-                            for step in s.steps: st.write(f"- {step}")
-
                 # Before/After preview
                 st.markdown("---")
                 st.subheader("✨ Before / After Vision (Preview)")
@@ -293,7 +275,7 @@ def main():
                 if preview.get("mask") is not None:
                     with st.expander("Mask applied for inpainting"): st.image(preview["mask"], use_container_width=True)
 
-                # Knowledge Base Insights (kept as-is)
+                # Knowledge Base Insights
                 q = f"{signal.get('damage_type','')} {signal.get('severity','')} repair guidance checklist risks"
                 chunks = agent.retriever.retrieve(q, top_k=3)
                 insights = format_kb_insights(chunks, max_items=4)
