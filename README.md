@@ -1,5 +1,7 @@
 # 🚗 Car Damage Assessment AI — Internal POC
 
+Live demo link: https://car-damage-ai.streamlit.app/
+ 
 > **Internal Proof of Concept**  
 > Designed as an internal demo for **insurance, fleet management, and automotive damage decision workflows**, where explainability, auditability, and human control are critical.  
 > High-trust vehicle damage assessment system combining Computer Vision, deterministic policy-driven decisioning, human-in-the-loop governance, and optional LLM guidance.
