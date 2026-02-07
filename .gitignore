@@ -1,0 +1,49 @@
+# env/secrets
+.env
+.env.*
+*.env
+secrets.*
+credentials.*
+*key*.json
+service_account*.json
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# logs/tmp/cache
+*.log
+tmp/
+cache/
+outputs/
+reports/
+
+# data & models (ML)
+data/
+dataset/
+models/
+weights/
+checkpoints/
+runs/
+wandb/
+mlruns/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.pkl
+*.joblib
+
+# OS
+Thumbs.db
