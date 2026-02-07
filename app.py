@@ -1,163 +1,103 @@
-# ===============================
-# ENV
-# ===============================
-from dotenv import load_dotenv
-load_dotenv()
-
-import os
 import streamlit as st
-import cv2
-import numpy as np
+import torch
+import torch.nn.functional as F
+from torchvision import transforms
 from PIL import Image
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-from datetime import datetime
-import textwrap
-from streamlit.components.v1 import html as st_html
 
-# ===============================
-# Agentic imports (UNCHANGED)
-# ===============================
-from agentic.trace import build_decision_trace
-from agentic.decision_agent import DecisionAgent
-from agentic.adapters import pick_primary_detection, detection_to_damage_signal
-from agentic.explainer import build_customer_explanation, format_kb_insights
-from agentic.strategies import build_repair_strategies, build_damage_story
-from agentic.vision.after_inpaint import make_repaired_after_preview
+# Artemedx-style imports
+from artemedx.models.damage_classifier import DamageClassifier
+from artemedx.policy.engine import PolicyEngine
+from artemedx.policy.loader import load_policies
 
-# ===============================
-# Optional model import (SAFE)
-# ===============================
-try:
-    from car_damage_detector import CarDamageDetector
-    from utils import enhance_image, calculate_damage_stats
-except ImportError:
-    CarDamageDetector = None
-
-
-# ===============================
-# PAGE CONFIG
-# ===============================
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="Car Damage Assessment AI",
-    page_icon="🚗",
-    layout="wide",
+    page_title="Car Damage Scan",
+    layout="centered"
 )
 
-# ===============================
-# WHITE THEME (CHANGE #2)
-# ===============================
-st.markdown("""
-<style>
-.stApp {
-    background: #ffffff;
-    color: #111111;
-}
-html, body, [class*="css"] {
-    font-family: Inter, sans-serif;
-}
-h1,h2,h3,h4 {
-    color: #111111;
-}
-.stMarkdown p {
-    color: #333333;
-}
-section[data-testid="stSidebar"] {
-    background: #f8f9fa;
-    border-right: 1px solid #e5e5e5;
-}
-.stButton button {
-    background: #ffffff !important;
-    color: #111111 !important;
-    border: 1px solid #cccccc !important;
-}
-</style>
-""", unsafe_allow_html=True)
+# White background
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: white;
+        color: black;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# ===============================
-# HERO
-# ===============================
-def render_hero():
-    st.title("🚗 Car Damage Assessment AI")
-    st.caption("AI-powered vehicle damage analysis with clean, reviewer-friendly UI")
+# ---------------- LOAD MODEL & POLICY ----------------
+@st.cache_resource
+def load_system():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ===============================
-# DEMO DAMAGE DETECTION (UNCHANGED)
-# ===============================
-def demo_damage_detection(image: Image.Image):
-    img = np.array(image)
-    h, w = img.shape[:2]
+    model = DamageClassifier()
+    model.load_pretrained()
+    model.to(device)
+    model.eval()
 
-    detections = [
-        {
-            "type": "Scratch",
-            "severity": "Light",
-            "confidence": 0.88,
-            "bbox": [int(w*0.2), int(h*0.3), int(w*0.4), int(h*0.5)],
-            "area_percentage": 2.4,
-            "estimated_cost": 150,
-        }
-    ]
+    policies = load_policies("policies/")
+    policy_engine = PolicyEngine(policies)
 
-    for d in detections:
-        x1,y1,x2,y2 = d["bbox"]
-        cv2.rectangle(img, (x1,y1), (x2,y2), (0,255,0), 2)
+    return model, policy_engine, device
 
-    return img, detections
+model, policy_engine, device = load_system()
 
-# ===============================
-# MAIN
-# ===============================
-def main():
-    render_hero()
+# ---------------- IMAGE TRANSFORM ----------------
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+])
 
-    uploaded = st.file_uploader(
-        "Upload car image",
-        type=["jpg","png","jpeg"]
-    )
+# ---------------- ANALYSIS FUNCTION ----------------
+def analyze_image(image):
+    img_tensor = transform(image).unsqueeze(0).to(device)
 
-    if uploaded:
-        image = Image.open(uploaded)
-        st.image(image, use_container_width=True)
+    with torch.no_grad():
+        output = model(img_tensor)
+        probs = F.softmax(output, dim=1)
 
-        if st.button("Analyze Damage"):
-            with st.spinner("Analyzing image..."):
-                processed, detections = demo_damage_detection(image)
+    severity = float(probs.max().item())
+    damage_class = int(torch.argmax(probs).item())
 
-            st.image(processed, caption="Detected Damage", use_container_width=True)
+    damage_map = {
+        0: "No Damage",
+        1: "Scratch",
+        2: "Dent",
+        3: "Broken Part"
+    }
 
-            primary = pick_primary_detection(detections)
-            agent = DecisionAgent(policies_dir="policies")
+    prediction = {
+        "damage_type": damage_map.get(damage_class, "Unknown"),
+        "severity": round(severity, 2)
+    }
 
-            if primary:
-                signal = detection_to_damage_signal(primary)
-                decision = agent.decide(signal)
+    decision = policy_engine.evaluate(prediction)
 
-                expl = build_customer_explanation(
-                    decision_action=decision.action,
-                    decision_reason=decision.reason,
-                    policy_refs=list(decision.policy_refs or []),
-                    next_steps=list(decision.next_steps or []),
-                    sop_text=None,
-                    signal=signal,
-                )
+    return prediction, decision
 
-                st.subheader("Assessment Result")
-                st.success(expl["summary"])
+# ---------------- UI ----------------
+st.title("🚗 Car Damage Detection System")
+st.write("Upload a car image to detect damage using AI and policy rules.")
 
-                if expl["why_bullets"]:
-                    st.write("**Why:**")
-                    for w in expl["why_bullets"]:
-                        st.write(f"- {w}")
+uploaded = st.file_uploader(
+    "Upload car image",
+    type=["jpg", "jpeg", "png"]
+)
 
-                if expl["next_steps"]:
-                    st.write("**Next Steps:**")
-                    for n in expl["next_steps"]:
-                        st.write(f"- {n}")
+if uploaded:
+    image = Image.open(uploaded).convert("RGB")
+    st.image(image, caption="Uploaded Image", use_column_width=True)
 
-    else:
-        st.info("Upload an image to begin analysis.")
+    with st.spinner("Analyzing image..."):
+        prediction, decision = analyze_image(image)
 
-if __name__ == "__main__":
-    main()
+    st.subheader("🔍 Damage Analysis")
+    st.write(f"**Damage Type:** {prediction['damage_type']}")
+    st.write(f"**Severity Score:** {prediction['severity']}")
+
+    st.subheader("📋 Policy Decision")
+    st.write(f"**Risk Level:** {decision['risk_level']}")
+    st.write(f"**Recommendation:** {decision['recommendation']}")
