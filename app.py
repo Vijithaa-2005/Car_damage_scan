@@ -36,14 +36,14 @@ def demo_damage_detection(image: Image.Image):
     img_bytes = image.tobytes()
     img_hash = int(hashlib.md5(img_bytes).hexdigest(), 16)
 
-    # Use hash to pick damages dynamically
+    # Semi-dynamic detections
     detections = []
     if img_hash % 3 == 0:
         detections.append({
             "type": "Windshield",
             "severity": "Severe",
             "confidence": 0.95,
-            "bbox":[int(w*0.3), int(h*0.1), int(w*0.7), int(h*0.4)],
+            "bbox":[int(w*0.3), int(h*0.05), int(w*0.7), int(h*0.25)],
             "area_percentage":12,
             "estimated_cost":800
         })
@@ -102,7 +102,7 @@ def demo_damage_detection(image: Image.Image):
     for d in detections:
         x1,y1,x2,y2 = d["bbox"]
         cv2.rectangle(img_annot, (x1,y1), (x2,y2), colors.get(d["type"], (255,0,0)), 3)
-        label = f"{d['type']} ({d['confidence']:.2f})"
+        label = f"{d['type']} (${d['estimated_cost']})"
         cv2.putText(img_annot, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
 
     return img_annot, detections
@@ -116,34 +116,36 @@ def generate_damage_suggestions_dynamic(detections, image):
 
     for d in detections:
         x1, y1, x2, y2 = d["bbox"]
+
         # Determine vertical position
         if y2 < h / 2:
             vertical = "Front"
         else:
             vertical = "Rear"
+
         # Determine horizontal position
         if x2 < w / 2:
             horizontal = "Left"
         else:
             horizontal = "Right"
 
-        # Build full part name if type is windshield/window
-        if "Windshield" in d["type"] or "Window" in d["type"]:
+        # Build full part name only for glass/windshield
+        if d["type"] in ["Windshield", "Side Window"]:
             part_name = f"{vertical}-{horizontal} {d['type']}"
         else:
             part_name = d["type"]
 
-        # Generate suggestion
-        if "Windshield" in d["type"] or "Window" in d["type"]:
-            suggestions.append(f"✅ {part_name} is damaged → Recommend replacement.")
+        # Suggestion text with cost included
+        if d["type"] in ["Windshield", "Side Window"]:
+            suggestions.append(f"✅ {part_name} is damaged → Recommend replacement. Estimated Cost: ${d['estimated_cost']}")
         elif d["type"] == "Scratch":
-            suggestions.append(f"✅ Paint scratches detected → Minor repaint/repair recommended.")
+            suggestions.append(f"✅ Paint scratches detected → Minor repaint/repair recommended. Estimated Cost: ${d['estimated_cost']}")
         elif d["type"] == "Dent":
-            suggestions.append(f"✅ Dent detected → Estimated repair cost: ${d['estimated_cost']}.")
+            suggestions.append(f"✅ Dent detected → Estimated repair cost: ${d['estimated_cost']}")
         elif d["type"] == "Paint Damage":
-            suggestions.append(f"✅ Paint damage detected → Check affected area (~{d['area_percentage']}%).")
+            suggestions.append(f"✅ Paint damage detected → Check affected area (~{d['area_percentage']}%). Estimated Cost: ${d['estimated_cost']}")
         else:
-            suggestions.append(f"⚠️ {part_name} requires attention.")
+            suggestions.append(f"⚠️ {part_name} requires attention. Estimated Cost: ${d['estimated_cost']}")
 
     suggestions.append("⚠️ Interior may be exposed → Check for dust/water damage.")
     return suggestions
@@ -210,7 +212,7 @@ if uploaded_file:
         report = generate_report(detections, image)
         st.table(pd.DataFrame([report]))
 
-        # Human-readable suggestions
+        # Human-readable suggestions with cost
         st.subheader("Detected Damage & Suggestions")
         suggestions = generate_damage_suggestions_dynamic(detections, image)
         for s in suggestions:
@@ -221,5 +223,5 @@ if uploaded_file:
         csv = df_dmg.to_csv(index=False).encode('utf-8')
         st.download_button("Download CSV Report", csv, "damage_report.csv", "text/csv")
 
-        # Auto-approve (no human review)
+        # Auto-Approve only
         st.success("✅ Auto-Approve: Repair ticket ready (demo).")
