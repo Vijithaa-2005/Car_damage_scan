@@ -25,28 +25,29 @@ st.markdown(
 )
 
 # --------------------------
-# Demo Damage Detection
+# Demo Damage Detection (with specific car parts)
 # --------------------------
 def demo_damage_detection(image: Image.Image):
     img_array = np.array(image)
     h, w = img_array.shape[:2]
 
-    # Example detections
+    # Updated detections including rear windshield & side window
     detections = [
+        {"type": "Rear Windshield", "severity": "Severe", "confidence": 0.95,
+         "bbox":[int(w*0.3), int(h*0.1), int(w*0.7), int(h*0.4)],
+         "area_percentage":12, "estimated_cost":800},
+        {"type": "Rear-left Side Window", "severity": "Severe", "confidence": 0.92,
+         "bbox":[int(w*0.1), int(h*0.3), int(w*0.25), int(h*0.5)],
+         "area_percentage":5, "estimated_cost":300},
         {"type": "Scratch", "severity": "Light", "confidence": 0.89,
-         "bbox":[int(w*0.2), int(h*0.3), int(w*0.4), int(h*0.5)],
+         "bbox":[int(w*0.2), int(h*0.6), int(w*0.4), int(h*0.8)],
          "area_percentage":2.5, "estimated_cost":150},
-        {"type": "Dent", "severity": "Moderate", "confidence": 0.76,
-         "bbox":[int(w*0.6), int(h*0.2), int(w*0.8), int(h*0.4)],
-         "area_percentage":8.3, "estimated_cost":450},
-        {"type": "Paint Damage", "severity": "Light", "confidence": 0.82,
-         "bbox":[int(w*0.1), int(h*0.6), int(w*0.25), int(h*0.8)],
-         "area_percentage":3.2, "estimated_cost":200},
     ]
 
     # Annotate image
     img_annot = img_array.copy()
-    colors = {"Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255)}
+    colors = {"Rear Windshield": (255,0,0), "Rear-left Side Window": (0,0,255),
+              "Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255)}
     for d in detections:
         x1,y1,x2,y2 = d["bbox"]
         cv2.rectangle(img_annot, (x1,y1), (x2,y2), colors.get(d["type"], (255,0,0)), 3)
@@ -60,17 +61,20 @@ def demo_damage_detection(image: Image.Image):
 def generate_damage_suggestions(detections):
     suggestions = []
     for d in detections:
-        if d["type"] == "Scratch" and d["severity"] == "Light":
+        if d["type"] == "Rear Windshield":
+            suggestions.append("✅ Rear windshield is completely broken → Recommend full replacement.")
+        elif d["type"] == "Rear-left Side Window":
+            suggestions.append("✅ Rear-left side window is broken → Replace side window.")
+        elif d["type"] == "Scratch":
             suggestions.append("✅ Paint scratches detected → Minor repaint/repair recommended.")
         elif d["type"] == "Dent":
-            suggestions.append(f"✅ {d['type']} detected → Estimated repair cost: ${d['estimated_cost']}.")
+            suggestions.append(f"✅ Dent detected → Estimated repair cost: ${d['estimated_cost']}.")
         elif d["type"] == "Paint Damage":
-            suggestions.append(f"✅ {d['type']} detected → Check affected area (~{d['area_percentage']}%).")
+            suggestions.append(f"✅ Paint damage detected → Check affected area (~{d['area_percentage']}%).")
         else:
             suggestions.append(f"⚠️ {d['type']} requires attention.")
-    # General hardcoded suggestions
+    # General suggestions
     suggestions.append("⚠️ Interior may be exposed → Check for dust/water damage.")
-    suggestions.append("✅ Verify all broken glass components → Replace if needed.")
     return suggestions
 
 # --------------------------
