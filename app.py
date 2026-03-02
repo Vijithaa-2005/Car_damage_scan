@@ -7,13 +7,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 
+# --- Page Config ---
 st.set_page_config(
     page_title="Car Damage Assessment AI",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# --- WHITE / LIGHT UI ---
+# --- White / Light UI ---
 st.markdown(
     """
     <style>
@@ -30,12 +31,20 @@ def demo_damage_detection(image: Image.Image):
     img_array = np.array(image)
     h, w = img_array.shape[:2]
 
+    # Example detections
     detections = [
-        {"type": "Scratch", "severity": "Light", "confidence": 0.89, "bbox":[int(w*0.2), int(h*0.3), int(w*0.4), int(h*0.5)], "area_percentage":2.5, "estimated_cost":150},
-        {"type": "Dent", "severity": "Moderate", "confidence": 0.76, "bbox":[int(w*0.6), int(h*0.2), int(w*0.8), int(h*0.4)], "area_percentage":8.3, "estimated_cost":450},
-        {"type": "Paint Damage", "severity": "Light", "confidence": 0.82, "bbox":[int(w*0.1), int(h*0.6), int(w*0.25), int(h*0.8)], "area_percentage":3.2, "estimated_cost":200},
+        {"type": "Scratch", "severity": "Light", "confidence": 0.89,
+         "bbox":[int(w*0.2), int(h*0.3), int(w*0.4), int(h*0.5)],
+         "area_percentage":2.5, "estimated_cost":150},
+        {"type": "Dent", "severity": "Moderate", "confidence": 0.76,
+         "bbox":[int(w*0.6), int(h*0.2), int(w*0.8), int(h*0.4)],
+         "area_percentage":8.3, "estimated_cost":450},
+        {"type": "Paint Damage", "severity": "Light", "confidence": 0.82,
+         "bbox":[int(w*0.1), int(h*0.6), int(w*0.25), int(h*0.8)],
+         "area_percentage":3.2, "estimated_cost":200},
     ]
 
+    # Annotate image
     img_annot = img_array.copy()
     colors = {"Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255)}
     for d in detections:
@@ -44,6 +53,25 @@ def demo_damage_detection(image: Image.Image):
         label = f"{d['type']} ({d['confidence']:.2f})"
         cv2.putText(img_annot, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
     return img_annot, detections
+
+# --------------------------
+# Human-Readable Suggestions
+# --------------------------
+def generate_damage_suggestions(detections):
+    suggestions = []
+    for d in detections:
+        if d["type"] == "Scratch" and d["severity"] == "Light":
+            suggestions.append("✅ Paint scratches detected → Minor repaint/repair recommended.")
+        elif d["type"] == "Dent":
+            suggestions.append(f"✅ {d['type']} detected → Estimated repair cost: ${d['estimated_cost']}.")
+        elif d["type"] == "Paint Damage":
+            suggestions.append(f"✅ {d['type']} detected → Check affected area (~{d['area_percentage']}%).")
+        else:
+            suggestions.append(f"⚠️ {d['type']} requires attention.")
+    # General hardcoded suggestions
+    suggestions.append("⚠️ Interior may be exposed → Check for dust/water damage.")
+    suggestions.append("✅ Verify all broken glass components → Replace if needed.")
+    return suggestions
 
 # --------------------------
 # Charts
@@ -129,6 +157,12 @@ if uploaded_file:
         # Report
         report = generate_report(detections, image)
         st.table(pd.DataFrame([report]))
+
+        # Human-readable suggestions
+        st.subheader("Detected Damage & Suggestions")
+        suggestions = generate_damage_suggestions(detections)
+        for s in suggestions:
+            st.write(s)
 
         # CSV download
         df_dmg = pd.DataFrame(detections)
