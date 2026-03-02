@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+import hashlib
 
 # --- Page Config ---
 st.set_page_config(
@@ -25,34 +26,85 @@ st.markdown(
 )
 
 # --------------------------
-# Demo Damage Detection (with specific car parts)
+# Demo Damage Detection (semi-dynamic)
 # --------------------------
 def demo_damage_detection(image: Image.Image):
     img_array = np.array(image)
     h, w = img_array.shape[:2]
 
-    # Updated detections including rear windshield & side window
-    detections = [
-        {"type": "Rear Windshield", "severity": "Severe", "confidence": 0.95,
-         "bbox":[int(w*0.3), int(h*0.1), int(w*0.7), int(h*0.4)],
-         "area_percentage":12, "estimated_cost":800},
-        {"type": "Rear-left Side Window", "severity": "Severe", "confidence": 0.92,
-         "bbox":[int(w*0.1), int(h*0.3), int(w*0.25), int(h*0.5)],
-         "area_percentage":5, "estimated_cost":300},
-        {"type": "Scratch", "severity": "Light", "confidence": 0.89,
-         "bbox":[int(w*0.2), int(h*0.6), int(w*0.4), int(h*0.8)],
-         "area_percentage":2.5, "estimated_cost":150},
-    ]
+    # Generate a hash based on image content
+    img_bytes = image.tobytes()
+    img_hash = int(hashlib.md5(img_bytes).hexdigest(), 16)
+
+    # Use hash to pick damages dynamically
+    detections = []
+    if img_hash % 3 == 0:
+        detections.append({
+            "type": "Rear Windshield",
+            "severity": "Severe",
+            "confidence": 0.95,
+            "bbox":[int(w*0.3), int(h*0.1), int(w*0.7), int(h*0.4)],
+            "area_percentage":12,
+            "estimated_cost":800
+        })
+        detections.append({
+            "type": "Scratch",
+            "severity": "Light",
+            "confidence": 0.88,
+            "bbox":[int(w*0.2), int(h*0.6), int(w*0.4), int(h*0.8)],
+            "area_percentage":3,
+            "estimated_cost":150
+        })
+    elif img_hash % 3 == 1:
+        detections.append({
+            "type": "Rear-left Side Window",
+            "severity": "Severe",
+            "confidence": 0.92,
+            "bbox":[int(w*0.1), int(h*0.3), int(w*0.25), int(h*0.5)],
+            "area_percentage":5,
+            "estimated_cost":300
+        })
+        detections.append({
+            "type": "Paint Damage",
+            "severity": "Light",
+            "confidence": 0.82,
+            "bbox":[int(w*0.6), int(h*0.2), int(w*0.8), int(h*0.4)],
+            "area_percentage":4,
+            "estimated_cost":200
+        })
+    else:
+        detections.append({
+            "type": "Dent",
+            "severity": "Moderate",
+            "confidence": 0.76,
+            "bbox":[int(w*0.4), int(h*0.5), int(w*0.6), int(h*0.7)],
+            "area_percentage":7,
+            "estimated_cost":450
+        })
+        detections.append({
+            "type": "Scratch",
+            "severity": "Light",
+            "confidence": 0.85,
+            "bbox":[int(w*0.2), int(h*0.2), int(w*0.35), int(h*0.35)],
+            "area_percentage":2,
+            "estimated_cost":120
+        })
 
     # Annotate image
     img_annot = img_array.copy()
-    colors = {"Rear Windshield": (255,0,0), "Rear-left Side Window": (0,0,255),
-              "Scratch": (0,255,0), "Dent": (255,165,0), "Paint Damage": (255,0,255)}
+    colors = {
+        "Rear Windshield": (255,0,0),
+        "Rear-left Side Window": (0,0,255),
+        "Scratch": (0,255,0),
+        "Dent": (255,165,0),
+        "Paint Damage": (255,0,255)
+    }
     for d in detections:
         x1,y1,x2,y2 = d["bbox"]
         cv2.rectangle(img_annot, (x1,y1), (x2,y2), colors.get(d["type"], (255,0,0)), 3)
         label = f"{d['type']} ({d['confidence']:.2f})"
         cv2.putText(img_annot, label, (x1,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
+
     return img_annot, detections
 
 # --------------------------
@@ -73,7 +125,6 @@ def generate_damage_suggestions(detections):
             suggestions.append(f"✅ Paint damage detected → Check affected area (~{d['area_percentage']}%).")
         else:
             suggestions.append(f"⚠️ {d['type']} requires attention.")
-    # General suggestions
     suggestions.append("⚠️ Interior may be exposed → Check for dust/water damage.")
     return suggestions
 
