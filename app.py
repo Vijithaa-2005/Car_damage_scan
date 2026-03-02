@@ -40,7 +40,7 @@ def demo_damage_detection(image: Image.Image):
     detections = []
     if img_hash % 3 == 0:
         detections.append({
-            "type": "Rear Windshield",
+            "type": "Windshield",
             "severity": "Severe",
             "confidence": 0.95,
             "bbox":[int(w*0.3), int(h*0.1), int(w*0.7), int(h*0.4)],
@@ -57,7 +57,7 @@ def demo_damage_detection(image: Image.Image):
         })
     elif img_hash % 3 == 1:
         detections.append({
-            "type": "Rear-left Side Window",
+            "type": "Side Window",
             "severity": "Severe",
             "confidence": 0.92,
             "bbox":[int(w*0.1), int(h*0.3), int(w*0.25), int(h*0.5)],
@@ -93,8 +93,8 @@ def demo_damage_detection(image: Image.Image):
     # Annotate image
     img_annot = img_array.copy()
     colors = {
-        "Rear Windshield": (255,0,0),
-        "Rear-left Side Window": (0,0,255),
+        "Windshield": (255,0,0),
+        "Side Window": (0,0,255),
         "Scratch": (0,255,0),
         "Dent": (255,165,0),
         "Paint Damage": (255,0,255)
@@ -108,23 +108,43 @@ def demo_damage_detection(image: Image.Image):
     return img_annot, detections
 
 # --------------------------
-# Human-Readable Suggestions
+# Human-Readable Suggestions (dynamic front/rear/left/right)
 # --------------------------
-def generate_damage_suggestions(detections):
+def generate_damage_suggestions_dynamic(detections, image):
     suggestions = []
+    h, w = image.height, image.width
+
     for d in detections:
-        if d["type"] == "Rear Windshield":
-            suggestions.append("✅ Rear windshield is completely broken → Recommend full replacement.")
-        elif d["type"] == "Rear-left Side Window":
-            suggestions.append("✅ Rear-left side window is broken → Replace side window.")
+        x1, y1, x2, y2 = d["bbox"]
+        # Determine vertical position
+        if y2 < h / 2:
+            vertical = "Front"
+        else:
+            vertical = "Rear"
+        # Determine horizontal position
+        if x2 < w / 2:
+            horizontal = "Left"
+        else:
+            horizontal = "Right"
+
+        # Build full part name if type is windshield/window
+        if "Windshield" in d["type"] or "Window" in d["type"]:
+            part_name = f"{vertical}-{horizontal} {d['type']}"
+        else:
+            part_name = d["type"]
+
+        # Generate suggestion
+        if "Windshield" in d["type"] or "Window" in d["type"]:
+            suggestions.append(f"✅ {part_name} is damaged → Recommend replacement.")
         elif d["type"] == "Scratch":
-            suggestions.append("✅ Paint scratches detected → Minor repaint/repair recommended.")
+            suggestions.append(f"✅ Paint scratches detected → Minor repaint/repair recommended.")
         elif d["type"] == "Dent":
             suggestions.append(f"✅ Dent detected → Estimated repair cost: ${d['estimated_cost']}.")
         elif d["type"] == "Paint Damage":
             suggestions.append(f"✅ Paint damage detected → Check affected area (~{d['area_percentage']}%).")
         else:
-            suggestions.append(f"⚠️ {d['type']} requires attention.")
+            suggestions.append(f"⚠️ {part_name} requires attention.")
+
     suggestions.append("⚠️ Interior may be exposed → Check for dust/water damage.")
     return suggestions
 
@@ -167,29 +187,6 @@ def generate_report(detections, image: Image.Image):
     return report
 
 # --------------------------
-# Human Review / Decisions
-# --------------------------
-def render_decision_ui():
-    st.markdown("---")
-    st.subheader("Decision Actions")
-    decision = st.radio("Select Decision Type:", ["Auto-Approve", "Human Review", "Escalate"])
-    if decision == "Auto-Approve":
-        st.success("✅ Auto-Approve: Ready to create repair ticket.")
-        if st.button("Create Repair Ticket"): st.info("Repair ticket created (demo).")
-    elif decision == "Human Review":
-        st.warning("⚠️ Human Review: Complete checklist.")
-        c1 = st.checkbox("Verify Vehicle ID / VIN")
-        c2 = st.checkbox("Confirm severity & area")
-        c3 = st.checkbox("Request additional images")
-        c4 = st.checkbox("Check repair vs replacement")
-        ready = all([c1,c2,c3,c4])
-        notes = st.text_area("Operator Notes", placeholder="Write notes for reviewer...")
-        if st.button("Submit for Review", disabled=not ready): st.info("Submitted for review (demo).")
-    else:
-        st.error("🚨 Escalate to specialist assessor.")
-        if st.button("Assign Senior Assessor"): st.info("Assigned to senior assessor (demo).")
-
-# --------------------------
 # Main UI
 # --------------------------
 st.title("Car Damage Assessment AI")
@@ -215,7 +212,7 @@ if uploaded_file:
 
         # Human-readable suggestions
         st.subheader("Detected Damage & Suggestions")
-        suggestions = generate_damage_suggestions(detections)
+        suggestions = generate_damage_suggestions_dynamic(detections, image)
         for s in suggestions:
             st.write(s)
 
@@ -224,5 +221,5 @@ if uploaded_file:
         csv = df_dmg.to_csv(index=False).encode('utf-8')
         st.download_button("Download CSV Report", csv, "damage_report.csv", "text/csv")
 
-        # Human Review / Decision UI
-        render_decision_ui()
+        # Auto-approve (no human review)
+        st.success("✅ Auto-Approve: Repair ticket ready (demo).")
